@@ -1,35 +1,62 @@
-import { Hono } from "https://esm.sh/hono@3.10.2";
-import { serveStatic } from "https://esm.sh/hono@3.10.2/adapter/deno/serve-static.ts";
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { serveDir } from "https://deno.land/std@0.224.0/http/file_server.ts";
 
-const app = new Hono();
+const POE_API_KEY = Deno.env.get("POE_API_KEY") ?? "";
 
-// API Key moved to server-side to prevent exposure and CORS issues
-const API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImE2ZTgzMzljLWU4NWYtNDFmMy1iODkyLWEzYTUyYWQ0ZTQ3YyIsImV4cCI6MTc2NTQ2NjM4OH0.np46KmkTvVx_pVITcnCW6aYApgYSGc7wMjabAbW_b4s';
-const TARGET_API = 'https://zai.is/api/v1/chat/completions';
+function corsHeaders() {
+  return new Headers({
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  });
+}
 
-// Proxy endpoint for chat completions
-app.post('/api/chat', async (c) => {
-  try {
-    const body = await c.req.json();
+serve(async (req) => {
+  const url = new URL(req.url);
 
-    const response = await fetch(TARGET_API, {
-      method: 'POST',
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders() });
+  }
+
+  if (url.pathname === "/api/chat" && req.method === "POST") {
+    if (!POE_API_KEY) {
+      return new Response("Missing POE_API_KEY", {
+        status: 500,
+        headers: corsHeaders(),
+      });
+    }
+
+    const payload = await req.json();
+
+    const poeResp = await fetch("https://api.poe.com/v1/chat/completions", {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${API_KEY}`
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${POE_API_KEY}`,
+        "HTTP-Referer": "http://localhost:8000",
+        "X-Title": "Lovable Clone",
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(payload),
     });
 
-    const data = await response.json();
-    return c.json(data, response.status as any);
-  } catch (error) {
-    console.error('Proxy Error:', error);
-    return c.json({ error: 'Failed to communicate with AI service' }, 500);
+    const headers = new Headers(corsHeaders());
+    const contentType = poeResp.headers.get("content-type") ?? "application/json";
+    headers.set("content-type", contentType);
+    headers.set("cache-control", "no-cache");
+    headers.set("connection", "keep-alive");
+
+    return new Response(poeResp.body, {
+      status: poeResp.status,
+      headers,
+    });
   }
-});
 
-// Serve static files
-app.use('/*', serveStatic({ root: './' }));
+  return serveDir(req, {
+    fsRoot: ".",
+    urlRoot: "",
+    showDirListing: false,
+    quiet: true,
+  });
+}, { port: 8000 });
 
-Deno.serve(app.fetch);
+
