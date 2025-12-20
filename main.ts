@@ -10,6 +10,8 @@ function corsHeaders() {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
   });
 }
 
@@ -93,11 +95,21 @@ serve(async (req) => {
     }
   }
 
-  return serveDir(req, {
+  const res = await serveDir(req, {
     fsRoot: ".",
     urlRoot: "",
     showDirListing: false,
     quiet: true,
+  });
+
+  const headers = new Headers(res.headers);
+  headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+  headers.set("Access-Control-Allow-Origin", "*");
+
+  return new Response(res.body, {
+    status: res.status,
+    headers,
   });
 }, { port: 8000 });
 
