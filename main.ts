@@ -5,8 +5,7 @@ import { createOpenAI } from "npm:@ai-sdk/openai";
 import { z } from "npm:zod";
 
 const OPENROUTER_API_KEY =
-  Deno.env.get("OPENROUTER_API_KEY") ??
-  "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";
+  Deno.env.get("OPENROUTER_API_KEY") ?? "";
 
 const POE_API_KEY = Deno.env.get("POE_API_KEY") ?? "";
 
