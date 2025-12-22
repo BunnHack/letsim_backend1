@@ -1,17 +1,30 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { serveDir } from "https://deno.land/std@0.224.0/http/file_server.ts";
+import { streamText, convertToCoreMessages } from "npm:ai";
+import { createOpenAI } from "npm:@ai-sdk/openai";
+import { z } from "npm:zod";
+
+const OPENROUTER_API_KEY =
+  Deno.env.get("OPENROUTER_API_KEY") ??
+  "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";
 
 const POE_API_KEY = Deno.env.get("POE_API_KEY") ?? "";
-const OPENROUTER_API_KEY =
-  Deno.env.get("OPENROUTER_API_KEY") ?? "";
+
+const openrouter = createOpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: OPENROUTER_API_KEY,
+});
+
+const poe = createOpenAI({
+  baseURL: "https://api.poe.com/v1",
+  apiKey: POE_API_KEY,
+});
 
 function corsHeaders() {
   return new Headers({
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-vercel-ai-data-stream",
   });
 }
 
@@ -23,93 +36,52 @@ serve(async (req) => {
   }
 
   if (url.pathname === "/api/chat" && req.method === "POST") {
-    const payload = await req.json();
-    const model = typeof payload.model === "string" ? payload.model : "";
+    try {
+      const { messages, model } = await req.json();
+      const modelId = typeof model === "string" ? model : "gpt-3.5-turbo";
+      const useOpenRouter = modelId.includes("/");
 
-    // If the model id looks like "provider/model:variant", route to OpenRouter.
-    const useOpenRouter = model.includes("/");
-
-    if (useOpenRouter) {
-      if (!OPENROUTER_API_KEY) {
-        return new Response("Missing OPENROUTER_API_KEY", {
-          status: 500,
-          headers: corsHeaders(),
-        });
+      if (!useOpenRouter && !POE_API_KEY) {
+        throw new Error("Missing POE_API_KEY");
       }
 
-      const orResp = await fetch(
-        "https://openrouter.ai/api/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-            "HTTP-Referer": "http://localhost:8000",
-            "X-Title": "Lovable Clone",
+      const languageModel = useOpenRouter ? openrouter(modelId) : poe(modelId);
+
+      const result = await streamText({
+        model: languageModel,
+        messages: convertToCoreMessages(messages),
+        tools: {
+          run_command: {
+            description: "Run a shell command inside the in-browser WebContainer terminal.",
+            parameters: z.object({
+              command: z.string().describe("The full shell command to execute, for example: 'ls -la', 'npm test', or 'cat package.json'."),
+            }),
           },
-          body: JSON.stringify(payload),
         },
-      );
-
-      const headers = new Headers(corsHeaders());
-      const contentType =
-        orResp.headers.get("content-type") ?? "application/json";
-      headers.set("content-type", contentType);
-      headers.set("cache-control", "no-cache");
-      headers.set("connection", "keep-alive");
-
-      return new Response(orResp.body, {
-        status: orResp.status,
-        headers,
       });
-    } else {
-      if (!POE_API_KEY) {
-        return new Response("Missing POE_API_KEY", {
-          status: 500,
-          headers: corsHeaders(),
-        });
-      }
 
-      const poeResp = await fetch("https://api.poe.com/v1/chat/completions", {
-        method: "POST",
+      return result.toDataStreamResponse({
         headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${POE_API_KEY}`,
-          "HTTP-Referer": "http://localhost:8000",
-          "X-Title": "Lovable Clone",
-        },
-        body: JSON.stringify(payload),
+          ...Object.fromEntries(corsHeaders()),
+        }
       });
-
-      const headers = new Headers(corsHeaders());
-      const contentType =
-        poeResp.headers.get("content-type") ?? "application/json";
-      headers.set("content-type", contentType);
-      headers.set("cache-control", "no-cache");
-      headers.set("connection", "keep-alive");
-
-      return new Response(poeResp.body, {
-        status: poeResp.status,
-        headers,
+    } catch (error) {
+      console.error("Chat error:", error);
+      return new Response(JSON.stringify({ error: String(error) }), {
+        status: 500,
+        headers: {
+          ...Object.fromEntries(corsHeaders()),
+          "Content-Type": "application/json"
+        }
       });
     }
   }
 
-  const res = await serveDir(req, {
+  return serveDir(req, {
     fsRoot: ".",
     urlRoot: "",
     showDirListing: false,
     quiet: true,
-  });
-
-  const headers = new Headers(res.headers);
-  headers.set("Cross-Origin-Opener-Policy", "same-origin");
-  headers.set("Cross-Origin-Embedder-Policy", "require-corp");
-  headers.set("Access-Control-Allow-Origin", "*");
-
-  return new Response(res.body, {
-    status: res.status,
-    headers,
   });
 }, { port: 8000 });
 
