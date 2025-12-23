@@ -3,8 +3,7 @@ import { serveDir } from "https://deno.land/std@0.224.0/http/file_server.ts";
 
 const POE_API_KEY = Deno.env.get("POE_API_KEY") ?? "";
 const OPENROUTER_API_KEY =
-  Deno.env.get("OPENROUTER_API_KEY") ??
-  "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";
+  Deno.env.get("OPENROUTER_API_KEY") ?? "";
 
 function corsHeaders() {
   return new Headers({
